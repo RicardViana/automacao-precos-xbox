@@ -22,7 +22,7 @@ JOGOS_PARA_ACOMPANHAR = [
     },
     {
         "nome": "Crimson Desert",
-        "url": "https://www.xbox.com/pt-BR/games/store/crimson-desert/9NG592G0W474"
+        "url": "https://www.xbox.com/pt-BR/games/store/crimson-desert/9P6HVHDP2PGK/0010"
     }
 ]
 
@@ -83,30 +83,50 @@ def obter_preco_atual(url):
 # 3. LÓGICA DE DADOS E COMPARAÇÃO
 # ==========================================
 def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
+    """
+    Guarda o preço no CSV e calcula a diferença em relação ao dia anterior.
+    Possui proteção contra avisos de concatenação (FutureWarning) do Pandas.
+    """
     data_hoje = datetime.now().strftime("%Y-%m-%d")
     preco_anterior = preco_atual
     
-    if os.path.exists(FICHEIRO_CSV):
-        df = pd.read_csv(FICHEIRO_CSV)
-    else:
-        df = pd.DataFrame(columns=["Data", "Nome", "Preco", "Link"])
-
-    historico_jogo = df[df['Nome'] == nome_jogo]
-    
-    if not historico_jogo.empty:
-        preco_anterior = historico_jogo.iloc[-1]['Preco'] 
-
-    diferenca_valor = preco_atual - preco_anterior
-    diferenca_perc = (diferenca_valor / preco_anterior * 100) if preco_anterior > 0 else 0.0
-
+    # 1. Prepara a linha de dados apenas com o jogo de hoje
     novo_registo = pd.DataFrame([{
         "Data": data_hoje, 
         "Nome": nome_jogo, 
         "Preco": preco_atual, 
         "Link": url_jogo
     }])
-    df = pd.concat([df, novo_registo], ignore_index=True)
-    df.to_csv(FICHEIRO_CSV, index=False)
+    
+    # 2. Verifica se o ficheiro já existe e se TEM dados dentro dele (tamanho > 0)
+    if os.path.exists(FICHEIRO_CSV) and os.path.getsize(FICHEIRO_CSV) > 0:
+        # Carrega o histórico completo
+        df = pd.read_csv(FICHEIRO_CSV)
+        
+        # Filtra para procurar apenas o histórico deste jogo específico
+        historico_jogo = df[df['Nome'] == nome_jogo]
+        
+        if not historico_jogo.empty:
+            preco_anterior = historico_jogo.iloc[-1]['Preco'] 
+            
+        # Como o "df" não está vazio, podemos usar o concat com toda a segurança!
+        df_final = pd.concat([df, novo_registo], ignore_index=True)
+        
+    else:
+        # Se é a primeiríssima vez a rodar, a nossa tabela é apenas o registo de hoje.
+        # Evitamos o `concat` e assim o Pandas nunca vai dar o FutureWarning!
+        df_final = novo_registo
+
+    # 3. Faz os cálculos de diferença solicitados
+    diferenca_valor = preco_atual - preco_anterior
+    
+    if preco_anterior > 0:
+        diferenca_perc = (diferenca_valor / preco_anterior) * 100
+    else:
+        diferenca_perc = 0.0
+
+    # 4. Guarda o resultado final no ficheiro CSV
+    df_final.to_csv(FICHEIRO_CSV, index=False)
     
     return preco_anterior, diferenca_valor, diferenca_perc
 
