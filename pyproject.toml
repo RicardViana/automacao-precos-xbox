@@ -9,5 +9,6 @@ dependencies = [
     "beautifulsoup4",
     "pandas",
     "streamlit",
-    "python-dotenv"
+    "python-dotenv",
+    "plotly"
 ]
