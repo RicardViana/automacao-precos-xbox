@@ -2,7 +2,7 @@
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue) 
 ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-Automated-success)
-![Status](https://img.shields.io/badge/Status-Em%20Produção-success)
+![Status](https://img.shields.io/badge/Status-Em%20Desenvolvimento-yellow)
 
 Este projeto é um sistema automatizado **100% na nuvem** desenvolvido em Python para monitorizar diariamente os preços de jogos na loja digital da Xbox. O sistema extrai os valores atualizados de forma autónoma, guarda o histórico numa base de dados (CSV) versionada no próprio repositório, envia relatórios por e-mail e disponibiliza um Dashboard interativo na web.
 
