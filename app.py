@@ -3,8 +3,8 @@ import pandas as pd
 import os
 import plotly.express as px
 
-st.set_page_config(page_title="Monitor de Preços", layout="centered")
-st.title("🎮 Monitor de Preços")
+st.set_page_config(page_title="Monitor de Preços de jogos", layout="centered")
+st.title("🎮 Monitor de Preços de Jogos do Xbox")
 
 # 💡 AJUSTE: Apontar para a pasta "dados" onde o robô guarda o ficheiro!
 FICHEIRO_CSV = "dados/historico_precos.csv"
@@ -25,7 +25,7 @@ if os.path.exists(FICHEIRO_CSV):
     if not df_filtrado.empty:
         # Informações principais do jogo escolhido
         link_jogo = df_filtrado['Link'].iloc[0]
-        st.markdown(f"**Jogo:** {jogo_selecionado} - [🔗 Abrir na Loja Xbox]({link_jogo})")
+        st.markdown(f"**Link:** [Loja Xbox]({link_jogo})")
         
         # Calcula métricas para o Dashboard
         preco_atual = df_filtrado['Preco'].iloc[-1]
@@ -66,7 +66,7 @@ if os.path.exists(FICHEIRO_CSV):
         fig.update_layout(yaxis=dict(autorange=True))
         
         # Mostra o gráfico no Streamlit
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
         
         # Tabela de dados apenas do jogo selecionado
         st.write("### Histórico de Registos")
