@@ -42,39 +42,37 @@ if os.path.exists(FICHEIRO_CSV):
     df = pd.read_csv(FICHEIRO_CSV)
     df['Data'] = pd.to_datetime(df['Data'])
     
-    # 1. Cria uma lista com os nomes únicos dos jogos guardados no CSV
+    # 1. Criar uma lista com os nomes únicos dos jogos guardados no CSV
     lista_de_jogos = df['Nome'].unique()
     
-    # 2. Cria uma caixa de seleção para o utilizador escolher o jogo
+    # 2. Criar uma caixa de seleção para escolher o jogo
     st.markdown("---")
-
     jogo_selecionado = st.selectbox("Escolhe um jogo para analisar:", lista_de_jogos)
     
-    # 3. Filtra os dados apenas para o jogo selecionado
+    # 3. Filtrar os dados do jogo selecionado
     df_filtrado = df[df['Nome'] == jogo_selecionado]
     
     if not df_filtrado.empty:
-        # Informações principais do jogo escolhido
         link_jogo = df_filtrado['Link'].iloc[0]
         st.markdown(f"**Link:** [Loja Xbox]({link_jogo})")
-        
         st.markdown("---")
 
-        # Calcula métricas para o Dashboard
+        # Calcular métricas para o Dashboard
         preco_atual = df_filtrado['Preco'].iloc[-1]
         
-        # Se houver mais de um dia de histórico, calcula a diferença para mostrar
+        # Mais de um dia de histórico calcular a diferença para mostrar
         se_houver_historico = len(df_filtrado) > 1
         preco_anterior = df_filtrado['Preco'].iloc[-2] if se_houver_historico else preco_atual
         diferenca = preco_atual - preco_anterior
         
-        # 💡 AJUSTE: Só mostrar o delta se houver uma variação real no preço
+        # Mostrar Delta se houver uma variação real no preço
         if se_houver_historico and diferenca != 0:
             delta_formatado = f"R$ {diferenca:.2f}"
+
         else:
             delta_formatado = None
         
-        # Mostra o preço com uma setinha verde/vermelha dependendo se subiu ou desceu
+        # Mostrar o preço com uma setinha verde/vermelha dependendo se subiu ou desceu
         st.metric(label="Preço Mais Recente", 
                   value=f"R$ {preco_atual:.2f}", 
                   delta=delta_formatado,
@@ -82,22 +80,23 @@ if os.path.exists(FICHEIRO_CSV):
         
         st.markdown("---")
 
-        # Cria o gráfico profissional com Plotly
+        # Criar o gráfico com Plotly
         st.write("### Evolução do Preço ao Longo do Tempo")
         
-        # Preparamos uma coluna de data só com Dia/Mês para ficar bonito no eixo X
+        # Preparar coluna de data só com Dia/Mês
         df_grafico = df_filtrado.copy()
-        df_grafico['Data_Exibicao'] = df_grafico['Data'].dt.strftime('%d/%m')
+        df_grafico['Data_Exibicao'] = df_grafico['Data'].dt.strftime('%d/%m/%Y')
         
+        # Configuração do grafico
         fig = px.line(
             df_grafico, 
             x='Data_Exibicao', 
             y='Preco', 
-            markers=True, # Adiciona bolinhas em cada dia para facilitar a visualização
+            markers=True,
             labels={'Data_Exibicao': 'Data', 'Preco': 'Preço (R$)'}
         )
         
-        # Força o eixo Y, zera a margem e reduz a altura total da "tela"
+        # Força o eixo Y, zerar a margem e reduz a altura total da "tela"
         fig.update_layout(
             yaxis=dict(autorange=True),
             margin=dict(t=0, b=30, l=0, r=0),
@@ -110,13 +109,13 @@ if os.path.exists(FICHEIRO_CSV):
         # Tabela de dados apenas do jogo selecionado
         st.write("### Histórico de Registos")
         
-        # 1. Filtra as colunas e ordena da mais recente para a mais antiga
+        # Filtrar as colunas e ordenar da mais recente para a mais antiga
         tabela_exibicao = df_filtrado[['Data', 'Preco']].sort_values(by="Data", ascending=False)
         
-        # 2. Formata a coluna 'Data' para mostrar apenas Ano-Mês-Dia (tira o 00:00:00)
+        # Formatar a coluna 'Data' para mostrar apenas Ano-Mês-Dia (tira o 00:00:00)
         tabela_exibicao['Data'] = tabela_exibicao['Data'].dt.strftime('%Y-%m-%d')
         
-        # 3. Exibe a tabela ocultando o índice (hide_index=True)
+        # Exibir a tabela ocultando o índice (hide_index=True)
         st.dataframe(tabela_exibicao, hide_index=True)
 
 else:
