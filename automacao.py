@@ -4,6 +4,7 @@ import smtplib
 import pandas as pd
 import os
 import json
+import re
 
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -13,18 +14,25 @@ from dotenv import load_dotenv
 
 # 1. Lista de jogos e configurações
 
-# Carrega as senhas do ficheiro .env que criaste
+# Carrega as senhas do ficheiro .env
 load_dotenv()
 
-# Lista e dicionario com jogos 
-JOGOS_PARA_ACOMPANHAR = [
+# Lista e dicionario com jogos e produtos
+ITENS_PARA_ACOMPANHAR = [
     {
         "nome": "Helldivers 2",
-        "url": "https://www.xbox.com/pt-br/games/store/helldivers-2/9p3pt7pqjd0m"
+        "url": "https://www.xbox.com/pt-br/games/store/helldivers-2/9p3pt7pqjd0m",
+        "loja": "xbox"
     },
     {
         "nome": "Crimson Desert",
-        "url": "https://www.xbox.com/pt-BR/games/store/crimson-desert/9P6HVHDP2PGK/0010"
+        "url": "https://www.xbox.com/pt-BR/games/store/crimson-desert/9P6HVHDP2PGK/0010",
+        "loja": "xbox"
+    },
+    {
+        "nome": "PlayStation 5 Slim Digital",
+        "url": "https://www.mercadolivre.com.br/console-playstation-5-slim-edico-digital-825-gb/p/MLB54963150",
+        "loja": "mercadolivre"
     }
 ]
 
@@ -45,14 +53,93 @@ email_destino_env = os.getenv("EMAIL_DESTINO", "")
 EMAIL_DESTINO = [email.strip() for email in email_destino_env.split(",") if email.strip()]
 
 # Variavel usada para não enviar o e-mail (teste)
-MODO_TESTE = False 
+MODO_TESTE = True 
 
-# 2. Funções
+# 2. Funções (DEF)
 
-# Obter o preço autal
-def obter_preco_atual(url):
+def extrair_preco_xbox(soup):
 
-    """Acessar o site da Xbox e extrai o preço do jogo específico."""
+    """Especialista em ler o site da Xbox e extrair o preço do jogo específico."""
+    
+    # Buscar dados no formato JSON-LD
+    script_json = soup.find("script", type="application/ld+json")
+
+    if script_json:
+        dados = json.loads(script_json.string)
+
+        # Buscar o preço do JSON 
+        if '@graph' in dados:
+            for item in dados['@graph']:
+
+                if 'offers' in item:
+                    ofertas = item['offers']
+
+                    # Validar se o preço é unico ou tem mais de um preço 
+                    if isinstance(ofertas, list) and len(ofertas) > 0:
+                        valor_str = str(ofertas[0].get('price', 0.0))
+                        return float(valor_str.replace('+', '').strip())
+                    
+                    elif isinstance(ofertas, dict):
+                        valor_str = str(ofertas.get('price', 0.0))
+                        return float(valor_str.replace('+', '').strip())
+    
+    # Caso os dados não esteja no formato JSON usar o HTML                
+    elemento_span = soup.find("span", class_=lambda c: c and "Price-module" in c)
+
+    # Tratar o dado para o formato do Brasil
+    if elemento_span:
+        texto_preco = elemento_span.text.replace("R$", "").replace("\xa0", "").replace(".", "").replace(",", "").replace("+", "").strip()
+
+        if "," in elemento_span.text:
+             texto_preco = elemento_span.text.replace("R$", "").replace(".", "").replace(",", ".").replace("+", "").strip()
+
+        return float(texto_preco)
+    
+    return 0.0
+
+# Obter o preço atual - Play5 Mercado Livre
+def extrair_preco_mercadolivre(soup):
+    
+    """
+    Especialista em ler o site do Mercado Livre.
+    Foca em extrair o valor "Normal" (parcelado), ignorando o preço PIX.
+    """
+    html_string = str(soup)
+
+    # Plano A --> Buscar direto no "Cofre Secreto" do Mercado Livre (React State)
+    # O ML guarda o preço base real em uma variável escondida chamada "localItemPrice"
+    match_estado = re.search(r'"localItemPrice":(\d+(?:\.\d+)?)', html_string)
+    if match_estado:
+        return float(match_estado.group(1))
+
+    # PLANO B --> Calcular através da matemática das parcelas
+    # Exemplo, procura o texto "em 10x R$ 354,40" e multiplica (10 * 354.40 = 3544.00)
+    bloco_pagamento = soup.find("p", class_=lambda c: c and "ui-pdp-payment-price" in c)
+    if bloco_pagamento:
+        texto_parcela = bloco_pagamento.text # ex: "em 10x R$ 354,40 sem juros"
+        
+        # Extrair os números da parcela usando Regex
+        match_parcela = re.search(r'(\d+)x.*?R\$\s*([\d.,]+)', texto_parcela)
+        if match_parcela:
+            num_parcelas = int(match_parcela.group(1)) # Pega o "10"
+            valor_parcela_str = match_parcela.group(2).replace(".", "").replace(",", ".") # Pega o "354.40"
+            valor_parcela = float(valor_parcela_str)
+            
+            return round(num_parcelas * valor_parcela, 2)
+
+    # PLANO C --> Pegar o preço principal em destaque (Último recurso, pode ser o PIX)
+    preco_principal = soup.find("div", class_=lambda c: c and "ui-pdp-price__second-line" in c)
+    if preco_principal:
+        fracao = preco_principal.find("span", class_="andes-money-amount__fraction")
+        if fracao:
+            return float(fracao.text.replace(".", ""))
+
+    return 0.0
+
+# Obter o preço atual 
+def obter_preco_atual(url, loja):
+
+    """Acessa o site usando os headers e redireciona o HTML para o especialista da loja."""
 
     # Configuração do cabecalho para requisicao
     headers = {
@@ -66,39 +153,16 @@ def obter_preco_atual(url):
         resposta.raise_for_status() 
         soup = BeautifulSoup(resposta.text, 'html.parser')
         
-        # Buscar dados no formato JSON-LD
-        script_json = soup.find("script", type="application/ld+json")
-
-        if script_json:
-            dados = json.loads(script_json.string)
-
-            # Buscar o preço do JSON 
-            if '@graph' in dados:
-                for item in dados['@graph']:
-
-                    if 'offers' in item:
-                        ofertas = item['offers']
-
-                        # Validar se o preço é unico ou tem mais de um preço 
-                        if isinstance(ofertas, list) and len(ofertas) > 0:
-                            valor_str = str(ofertas[0].get('price', 0.0))
-                            return float(valor_str.replace('+', '').strip())
-                        
-                        elif isinstance(ofertas, dict):
-                            valor_str = str(ofertas.get('price', 0.0))
-                            return float(valor_str.replace('+', '').strip())
+        # Redireciona para o especialista correto
+        if loja == "xbox":
+            return extrair_preco_xbox(soup)
         
-        # Caso os dados não esteja no formato JSON usar o HTML                
-        elemento_span = soup.find("span", class_=lambda c: c and "Price-module" in c)
-
-        # Tratar o dado para o formato do Brasil
-        if elemento_span:
-            texto_preco = elemento_span.text.replace("R$", "").replace("\xa0", "").replace(".", "").replace(",", "").replace("+", "").strip()
-
-            if "," in elemento_span.text:
-                 texto_preco = elemento_span.text.replace("R$", "").replace(".", "").replace(",", ".").replace("+", "").strip()
-
-            return float(texto_preco)
+        elif loja == "mercadolivre":
+            return extrair_preco_mercadolivre(soup)
+        
+        else:
+            print(f"⚠️ Loja desconhecida: {loja}")
+            return 0.0
             
     except Exception as e:
         print(f"⚠️ Erro ao procurar preço para o link {url}: {e}")
@@ -145,7 +209,7 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
                 novo_registo = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
                 df_final = pd.concat([df, novo_registo], ignore_index=True)
 
-        # Inserir um novo registro que não consta no CSV     
+        # Inserir um novo registro que não consta no CSV    
         else:
             novo_registo = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
             df_final = pd.concat([df, novo_registo], ignore_index=True)
@@ -206,10 +270,10 @@ if __name__ == "__main__":
 
     texto_email = "Relatório Diário de Preços:\n\n"
     
-    for jogo in JOGOS_PARA_ACOMPANHAR:
+    for jogo in ITENS_PARA_ACOMPANHAR:
         print(f"A processar: {jogo['nome']}...")
         
-        preco_hoje = obter_preco_atual(jogo["url"])
+        preco_hoje = obter_preco_atual(jogo["url"], jogo["loja"])
         p_ant, diff_v, diff_p = atualizar_dados_e_comparar(jogo["nome"], jogo["url"], preco_hoje)
         
         texto_jogo = f"{jogo['nome']}\n"
