@@ -1,4 +1,4 @@
-# 🎮 Monitor e Automação de Preços Xbox
+# 🎮 Monitor e Automação de Preços
 
 ![Python](https://img.shields.io/badge/Python-3.12-blue) 
 ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-Automated-success)
