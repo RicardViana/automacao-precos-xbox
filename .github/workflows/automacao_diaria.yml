@@ -7,7 +7,7 @@ env:
 # Horario de execução e habilitar execução manual
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 8 * * *'
   
   workflow_dispatch: 
 
