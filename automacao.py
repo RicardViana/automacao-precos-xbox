@@ -172,11 +172,11 @@ def obter_preco_atual(url, loja):
     return 0.0
 
 # Atualizar CSV e comparar os dados
-def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
-    
+def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual, loja):
+
     """
-    Guarda o preço e a hora no CSV (evitando duplicados no mesmo dia) 
-    e calcula a diferença em relação ao último preço conhecido.
+    Guarda o preço, hora e loja no CSV.
+    Calcula a diferença em relação ao último preço conhecido na MESMA loja.
     """
 
     data_hoje = datetime.now().strftime("%Y-%m-%d")
@@ -186,48 +186,46 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
     if os.path.exists(FICHEIRO_CSV) and os.path.getsize(FICHEIRO_CSV) > 0:
         df = pd.read_csv(FICHEIRO_CSV)
         
-        # 💡 Se for o CSV antigo e não tiver a coluna 'Hora' é criado
+        # Adicionar a coluna Hora se não existir
         if 'Hora' not in df.columns:
-            df.insert(1, 'Hora', "") 
+            df.insert(1, 'Hora', "")
+            
+        # Adiciona a coluna Loja se não existir
+        if 'Loja' not in df.columns:
+            df.insert(2, 'Loja', "")
+
+        # Atualiza o histórico antigo
+        df.loc[df['Nome'] == nome_jogo, 'Loja'] = loja
         
-        # Filtrar todos os registos anteriores
-        historico_jogo = df[df['Nome'] == nome_jogo]
+        historico_jogo = df[(df['Nome'] == nome_jogo) & (df['Loja'] == loja)]
         
-        # Verificar se existe historico do jogo
         if not historico_jogo.empty:
             registo_hoje = historico_jogo[historico_jogo['Data'] == data_hoje]
             
-            # Verificar se os dados de hoje já estão no CSV 
             if not registo_hoje.empty:
                 historico_antes_de_hoje = historico_jogo[historico_jogo['Data'] != data_hoje]
 
-                # Verificar se há dado do dia anterior
                 if not historico_antes_de_hoje.empty:
                      preco_anterior = historico_antes_de_hoje.iloc[-1]['Preco']
                 
                 indice = registo_hoje.index[0]
                 
-                # Update do preço e hora
                 df.at[indice, 'Preco'] = preco_atual
                 df.at[indice, 'Hora'] = hora_atual
-                
                 df_final = df
                 
             else:
                 preco_anterior = historico_jogo.iloc[-1]['Preco']
-                novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+                novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
                 df_final = pd.concat([df, novo_registo], ignore_index=True)
 
-        # Inserir um novo registro que não consta no CSV    
         else:
-            novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+            novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
             df_final = pd.concat([df, novo_registo], ignore_index=True)
 
-    # Criar arquivo CSV caso ainda não exista      
     else:
-        df_final = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+        df_final = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
 
-    # Fazer os cálculos de diferença baseados no preço anterior encontrado
     diferenca_valor = preco_atual - preco_anterior
     
     if preco_anterior > 0:
@@ -282,7 +280,7 @@ if __name__ == "__main__":
         print(f"A processar: {jogo['nome']}...")
         
         preco_hoje = obter_preco_atual(jogo["url"], jogo["loja"])
-        p_ant, diff_v, diff_p = atualizar_dados_e_comparar(jogo["nome"], jogo["url"], preco_hoje)
+        p_ant, diff_v, diff_p = atualizar_dados_e_comparar(jogo["nome"], jogo["url"], preco_hoje, jogo["loja"])
         
         texto_jogo = f"{jogo['nome']}\n"
         texto_jogo += f"{preco_hoje:.2f} ({p_ant:.2f} | {diff_v:.2f} | {diff_p:.2f}%)\n"
