@@ -173,17 +173,22 @@ def obter_preco_atual(url, loja):
 
 # Atualizar CSV e comparar os dados
 def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
-
+    
     """
-    Guarda o preço no CSV (evitando duplicados no mesmo dia) 
+    Guarda o preço e a hora no CSV (evitando duplicados no mesmo dia) 
     e calcula a diferença em relação ao último preço conhecido.
     """
 
     data_hoje = datetime.now().strftime("%Y-%m-%d")
+    hora_atual = datetime.now().strftime("%H:%M:%S")
     preco_anterior = preco_atual
     
     if os.path.exists(FICHEIRO_CSV) and os.path.getsize(FICHEIRO_CSV) > 0:
         df = pd.read_csv(FICHEIRO_CSV)
+        
+        # 💡 Se for o CSV antigo e não tiver a coluna 'Hora' é criado
+        if 'Hora' not in df.columns:
+            df.insert(1, 'Hora', "") 
         
         # Filtrar todos os registos anteriores
         historico_jogo = df[df['Nome'] == nome_jogo]
@@ -201,29 +206,32 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
                      preco_anterior = historico_antes_de_hoje.iloc[-1]['Preco']
                 
                 indice = registo_hoje.index[0]
+                
+                # Update do preço e hora
                 df.at[indice, 'Preco'] = preco_atual
+                df.at[indice, 'Hora'] = hora_atual
+                
                 df_final = df
                 
             else:
                 preco_anterior = historico_jogo.iloc[-1]['Preco']
-                novo_registo = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+                novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
                 df_final = pd.concat([df, novo_registo], ignore_index=True)
 
         # Inserir um novo registro que não consta no CSV    
         else:
-            novo_registo = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+            novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
             df_final = pd.concat([df, novo_registo], ignore_index=True)
 
-    # Criar arquivo CSV ainda não existe      
+    # Criar arquivo CSV caso ainda não exista      
     else:
-        df_final = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+        df_final = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
 
     # Fazer os cálculos de diferença baseados no preço anterior encontrado
     diferenca_valor = preco_atual - preco_anterior
     
     if preco_anterior > 0:
         diferenca_perc = (diferenca_valor / preco_anterior) * 100
-
     else:
         diferenca_perc = 0.0
 
