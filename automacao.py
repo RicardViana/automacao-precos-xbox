@@ -8,11 +8,15 @@ import re
 
 from bs4 import BeautifulSoup
 from datetime import datetime
+from zoneinfo import ZoneInfo 
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 
 # 1. Lista de jogos e configurações
+
+# Variavel usada para não enviar o e-mail (teste)
+MODO_TESTE = True 
 
 # Carrega as senhas do ficheiro .env
 load_dotenv()
@@ -51,9 +55,6 @@ email_destino_env = os.getenv("EMAIL_DESTINO", "")
 
 # Transformar os e-mails separados por vírgula em lista
 EMAIL_DESTINO = [email.strip() for email in email_destino_env.split(",") if email.strip()]
-
-# Variavel usada para não enviar o e-mail (teste)
-MODO_TESTE = False 
 
 # 2. Funções (DEF)
 
@@ -97,43 +98,48 @@ def extrair_preco_xbox(soup):
     
     return 0.0
 
-# Obter o preço atual - Play5 Mercado Livre
 def extrair_preco_mercadolivre(soup):
-    
     """
-    Especialista em ler o site do Mercado Livre.
-    Foca em extrair o valor "Normal" (parcelado), ignorando o preço PIX.
+    Regra de Ouro: Analisa a página, recolhe os preços disponíveis 
+    (Tela, Parcelas e Código Fonte) e retorna o MAIOR valor.
+    Se houver apenas um preço, ele será o maior e o único.
     """
+    precos_encontrados = []
     html_string = str(soup)
 
-    # Plano A --> Buscar direto no "Cofre Secreto" do Mercado Livre (React State)
-    # O ML guarda o preço base real em uma variável escondida chamada "localItemPrice"
+    # 1. Pegar o preço GIGANTE que aparece na tela
+    bloco_principal = soup.find("div", class_=lambda c: c and "ui-pdp-price__second-line" in c)
+    if bloco_principal:
+        fracao = bloco_principal.find("span", class_="andes-money-amount__fraction")
+        if fracao:
+            valor_str = fracao.text.replace(".", "")
+            centavos = bloco_principal.find("span", class_="andes-money-amount__cents")
+            if centavos:
+                valor_str += "." + centavos.text
+            
+            precos_encontrados.append(float(valor_str))
+
+    # 2. Pegar a matemática real das parcelas (ex: "em 10x R$ 359,90")
+    bloco_pagamento = soup.find(class_=lambda c: c and "ui-pdp-payment-price" in c)
+    if bloco_pagamento:
+        match_parcela = re.search(r'(\d+)\s*x.*?R\$\s*([\d.,]+)', bloco_pagamento.text, re.IGNORECASE)
+        if match_parcela:
+            num_parcelas = int(match_parcela.group(1))
+            valor_parcela = float(match_parcela.group(2).replace(".", "").replace(",", "."))
+            precos_encontrados.append(round(num_parcelas * valor_parcela, 2))
+
+    # 3. Pegar o valor real escondido no código (React State)
     match_estado = re.search(r'"localItemPrice":(\d+(?:\.\d+)?)', html_string)
     if match_estado:
-        return float(match_estado.group(1))
+        precos_encontrados.append(float(match_estado.group(1)))
 
-    # PLANO B --> Calcular através da matemática das parcelas
-    # Exemplo, procura o texto "em 10x R$ 354,40" e multiplica (10 * 354.40 = 3544.00)
-    bloco_pagamento = soup.find("p", class_=lambda c: c and "ui-pdp-payment-price" in c)
-    if bloco_pagamento:
-        texto_parcela = bloco_pagamento.text # ex: "em 10x R$ 354,40 sem juros"
+    # Filtra a lista para garantir que não temos zeros a atrapalhar
+    precos_validos = [p for p in precos_encontrados if p > 0.0]
+
+    # A MAGIA ACONTECE AQUI: Devolve o maior preço da lista!
+    if precos_validos:
+        return max(precos_validos)
         
-        # Extrair os números da parcela usando Regex
-        match_parcela = re.search(r'(\d+)x.*?R\$\s*([\d.,]+)', texto_parcela)
-        if match_parcela:
-            num_parcelas = int(match_parcela.group(1)) # Pega o "10"
-            valor_parcela_str = match_parcela.group(2).replace(".", "").replace(",", ".") # Pega o "354.40"
-            valor_parcela = float(valor_parcela_str)
-            
-            return round(num_parcelas * valor_parcela, 2)
-
-    # PLANO C --> Pegar o preço principal em destaque (Último recurso, pode ser o PIX)
-    preco_principal = soup.find("div", class_=lambda c: c and "ui-pdp-price__second-line" in c)
-    if preco_principal:
-        fracao = preco_principal.find("span", class_="andes-money-amount__fraction")
-        if fracao:
-            return float(fracao.text.replace(".", ""))
-
     return 0.0
 
 # Obter o preço atual 
@@ -180,10 +186,10 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual, loja):
     Calcula a diferença em relação ao último preço conhecido na MESMA loja.
     """
 
-    data_hoje = datetime.now().strftime("%Y-%m-%d")
-    hora_atual = datetime.now().strftime("%H:%M:%S")
-
-    # Fronteira de turnos
+    fuso_br = ZoneInfo("America/Sao_Paulo")
+    
+    data_hoje = datetime.now(fuso_br).strftime("%Y-%m-%d")
+    hora_atual = datetime.now(fuso_br).strftime("%H:%M:%S")
     limite_meio_dia = "12:00:00" 
     
     preco_anterior = preco_atual
@@ -270,7 +276,8 @@ def enviar_email(corpo_mensagem):
     msg['To'] = ", ".join(EMAIL_DESTINO) 
 
     # Assunto do e-mail
-    msg['Subject'] = f"Atualização Diária de Preços - {datetime.now().strftime('%d/%m/%Y')}"
+    fuso_br = ZoneInfo("America/Sao_Paulo")
+    msg['Subject'] = f"Atualização Diária de Preços Xbox - {datetime.now(fuso_br).strftime('%d/%m/%Y')}"
     
     # Criar o texto do e-mail
     msg.attach(MIMEText(texto_final, 'plain'))
