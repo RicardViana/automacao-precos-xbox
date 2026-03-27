@@ -4,6 +4,7 @@ import smtplib
 import pandas as pd
 import os
 import json
+import re
 
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -13,18 +14,25 @@ from dotenv import load_dotenv
 
 # 1. Lista de jogos e configurações
 
-# Carrega as senhas do ficheiro .env que criaste
+# Carrega as senhas do ficheiro .env
 load_dotenv()
 
-# Lista e dicionario com jogos 
-JOGOS_PARA_ACOMPANHAR = [
+# Lista e dicionario com jogos e produtos
+ITENS_PARA_ACOMPANHAR = [
     {
         "nome": "Helldivers 2",
-        "url": "https://www.xbox.com/pt-br/games/store/helldivers-2/9p3pt7pqjd0m"
+        "url": "https://www.xbox.com/pt-br/games/store/helldivers-2/9p3pt7pqjd0m",
+        "loja": "xbox"
     },
     {
         "nome": "Crimson Desert",
-        "url": "https://www.xbox.com/pt-BR/games/store/crimson-desert/9P6HVHDP2PGK/0010"
+        "url": "https://www.xbox.com/pt-BR/games/store/crimson-desert/9P6HVHDP2PGK/0010",
+        "loja": "xbox"
+    },
+    {
+        "nome": "PlayStation 5 Slim Digital",
+        "url": "https://www.mercadolivre.com.br/console-playstation-5-slim-edico-digital-825-gb/p/MLB54963150",
+        "loja": "mercadolivre"
     }
 ]
 
@@ -47,12 +55,91 @@ EMAIL_DESTINO = [email.strip() for email in email_destino_env.split(",") if emai
 # Variavel usada para não enviar o e-mail (teste)
 MODO_TESTE = False 
 
-# 2. Funções
+# 2. Funções (DEF)
 
-# Obter o preço autal
-def obter_preco_atual(url):
+def extrair_preco_xbox(soup):
 
-    """Acessar o site da Xbox e extrai o preço do jogo específico."""
+    """Especialista em ler o site da Xbox e extrair o preço do jogo específico."""
+    
+    # Buscar dados no formato JSON-LD
+    script_json = soup.find("script", type="application/ld+json")
+
+    if script_json:
+        dados = json.loads(script_json.string)
+
+        # Buscar o preço do JSON 
+        if '@graph' in dados:
+            for item in dados['@graph']:
+
+                if 'offers' in item:
+                    ofertas = item['offers']
+
+                    # Validar se o preço é unico ou tem mais de um preço 
+                    if isinstance(ofertas, list) and len(ofertas) > 0:
+                        valor_str = str(ofertas[0].get('price', 0.0))
+                        return float(valor_str.replace('+', '').strip())
+                    
+                    elif isinstance(ofertas, dict):
+                        valor_str = str(ofertas.get('price', 0.0))
+                        return float(valor_str.replace('+', '').strip())
+    
+    # Caso os dados não esteja no formato JSON usar o HTML                
+    elemento_span = soup.find("span", class_=lambda c: c and "Price-module" in c)
+
+    # Tratar o dado para o formato do Brasil
+    if elemento_span:
+        texto_preco = elemento_span.text.replace("R$", "").replace("\xa0", "").replace(".", "").replace(",", "").replace("+", "").strip()
+
+        if "," in elemento_span.text:
+             texto_preco = elemento_span.text.replace("R$", "").replace(".", "").replace(",", ".").replace("+", "").strip()
+
+        return float(texto_preco)
+    
+    return 0.0
+
+# Obter o preço atual - Play5 Mercado Livre
+def extrair_preco_mercadolivre(soup):
+    
+    """
+    Especialista em ler o site do Mercado Livre.
+    Foca em extrair o valor "Normal" (parcelado), ignorando o preço PIX.
+    """
+    html_string = str(soup)
+
+    # Plano A --> Buscar direto no "Cofre Secreto" do Mercado Livre (React State)
+    # O ML guarda o preço base real em uma variável escondida chamada "localItemPrice"
+    match_estado = re.search(r'"localItemPrice":(\d+(?:\.\d+)?)', html_string)
+    if match_estado:
+        return float(match_estado.group(1))
+
+    # PLANO B --> Calcular através da matemática das parcelas
+    # Exemplo, procura o texto "em 10x R$ 354,40" e multiplica (10 * 354.40 = 3544.00)
+    bloco_pagamento = soup.find("p", class_=lambda c: c and "ui-pdp-payment-price" in c)
+    if bloco_pagamento:
+        texto_parcela = bloco_pagamento.text # ex: "em 10x R$ 354,40 sem juros"
+        
+        # Extrair os números da parcela usando Regex
+        match_parcela = re.search(r'(\d+)x.*?R\$\s*([\d.,]+)', texto_parcela)
+        if match_parcela:
+            num_parcelas = int(match_parcela.group(1)) # Pega o "10"
+            valor_parcela_str = match_parcela.group(2).replace(".", "").replace(",", ".") # Pega o "354.40"
+            valor_parcela = float(valor_parcela_str)
+            
+            return round(num_parcelas * valor_parcela, 2)
+
+    # PLANO C --> Pegar o preço principal em destaque (Último recurso, pode ser o PIX)
+    preco_principal = soup.find("div", class_=lambda c: c and "ui-pdp-price__second-line" in c)
+    if preco_principal:
+        fracao = preco_principal.find("span", class_="andes-money-amount__fraction")
+        if fracao:
+            return float(fracao.text.replace(".", ""))
+
+    return 0.0
+
+# Obter o preço atual 
+def obter_preco_atual(url, loja):
+
+    """Acessa o site usando os headers e redireciona o HTML para o especialista da loja."""
 
     # Configuração do cabecalho para requisicao
     headers = {
@@ -66,39 +153,16 @@ def obter_preco_atual(url):
         resposta.raise_for_status() 
         soup = BeautifulSoup(resposta.text, 'html.parser')
         
-        # Buscar dados no formato JSON-LD
-        script_json = soup.find("script", type="application/ld+json")
-
-        if script_json:
-            dados = json.loads(script_json.string)
-
-            # Buscar o preço do JSON 
-            if '@graph' in dados:
-                for item in dados['@graph']:
-
-                    if 'offers' in item:
-                        ofertas = item['offers']
-
-                        # Validar se o preço é unico ou tem mais de um preço 
-                        if isinstance(ofertas, list) and len(ofertas) > 0:
-                            valor_str = str(ofertas[0].get('price', 0.0))
-                            return float(valor_str.replace('+', '').strip())
-                        
-                        elif isinstance(ofertas, dict):
-                            valor_str = str(ofertas.get('price', 0.0))
-                            return float(valor_str.replace('+', '').strip())
+        # Redireciona para o especialista correto
+        if loja == "xbox":
+            return extrair_preco_xbox(soup)
         
-        # Caso os dados não esteja no formato JSON usar o HTML                
-        elemento_span = soup.find("span", class_=lambda c: c and "Price-module" in c)
-
-        # Tratar o dado para o formato do Brasil
-        if elemento_span:
-            texto_preco = elemento_span.text.replace("R$", "").replace("\xa0", "").replace(".", "").replace(",", "").replace("+", "").strip()
-
-            if "," in elemento_span.text:
-                 texto_preco = elemento_span.text.replace("R$", "").replace(".", "").replace(",", ".").replace("+", "").strip()
-
-            return float(texto_preco)
+        elif loja == "mercadolivre":
+            return extrair_preco_mercadolivre(soup)
+        
+        else:
+            print(f"⚠️ Loja desconhecida: {loja}")
+            return 0.0
             
     except Exception as e:
         print(f"⚠️ Erro ao procurar preço para o link {url}: {e}")
@@ -108,65 +172,87 @@ def obter_preco_atual(url):
     return 0.0
 
 # Atualizar CSV e comparar os dados
-def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual):
+def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual, loja):
 
     """
-    Guarda o preço no CSV (evitando duplicados no mesmo dia) 
-    e calcula a diferença em relação ao último preço conhecido.
+    Guarda o preço, hora e loja no CSV.
+    Permite até 2 registos por dia (Manhã: 00:00-12:00 / Tarde: 12:01-23:59).
+    Calcula a diferença em relação ao último preço conhecido na MESMA loja.
     """
 
     data_hoje = datetime.now().strftime("%Y-%m-%d")
+    hora_atual = datetime.now().strftime("%H:%M:%S")
+
+    # Fronteira de turnos
+    limite_meio_dia = "12:00:00" 
+    
     preco_anterior = preco_atual
     
     if os.path.exists(FICHEIRO_CSV) and os.path.getsize(FICHEIRO_CSV) > 0:
         df = pd.read_csv(FICHEIRO_CSV)
         
-        # Filtrar todos os registos anteriores
-        historico_jogo = df[df['Nome'] == nome_jogo]
-        
-        # Verificar se existe historico do jogo
-        if not historico_jogo.empty:
-            registo_hoje = historico_jogo[historico_jogo['Data'] == data_hoje]
+        # Adicionar a coluna Hora e Loja se não existir
+        if 'Hora' not in df.columns:
+            df.insert(1, 'Hora', "")
             
-            # Verificar se os dados de hoje já estão no CSV 
-            if not registo_hoje.empty:
-                historico_antes_de_hoje = historico_jogo[historico_jogo['Data'] != data_hoje]
+        if 'Loja' not in df.columns:
+            df.insert(2, 'Loja', "")
 
-                # Verificar se há dado do dia anterior
-                if not historico_antes_de_hoje.empty:
-                     preco_anterior = historico_antes_de_hoje.iloc[-1]['Preco']
-                
-                indice = registo_hoje.index[0]
-                df.at[indice, 'Preco'] = preco_atual
-                df_final = df
-                
+        # Atualiza o histórico antigo
+        df.loc[df['Nome'] == nome_jogo, 'Loja'] = loja
+        
+        historico_jogo = df[(df['Nome'] == nome_jogo) & (df['Loja'] == loja)]
+        
+        if not historico_jogo.empty:
+            registos_hoje = historico_jogo[historico_jogo['Data'] == data_hoje]
+            
+            # Regra dos turnos
+            if hora_atual <= limite_meio_dia:
+                registo_turno = registos_hoje[registos_hoje['Hora'] <= limite_meio_dia]
+
             else:
-                preco_anterior = historico_jogo.iloc[-1]['Preco']
-                novo_registo = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
-                df_final = pd.concat([df, novo_registo], ignore_index=True)
+                registo_turno = registos_hoje[registos_hoje['Hora'] > limite_meio_dia]
+            
+            # Fazer o update usando a regra do turno
+            if not registo_turno.empty:
+                indice = registo_turno.index[0]
+                
+                # Para saber o preço anterior, temos de olhar para o histórico ignorando esta linha que estamos a alterar
+                historico_antes = historico_jogo.drop(index=indice)
+                if not historico_antes.empty:
+                    preco_anterior = historico_antes.iloc[-1]['Preco']
+                
+                df.at[indice, 'Preco'] = preco_atual
+                df.at[indice, 'Hora'] = hora_atual
+                df_final = df
 
-        # Inserir um novo registro que não consta no CSV     
+            # Insert da primeira vez que do turno   
+            else:
+                
+                preco_anterior = historico_jogo.iloc[-1]['Preco']
+                novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+                df_final = pd.concat([df, novo_registo], ignore_index=True)
+        
+        # Jogo novo no CSV
         else:
-            novo_registo = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+            novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
             df_final = pd.concat([df, novo_registo], ignore_index=True)
 
-    # Criar arquivo CSV ainda não existe      
+    # Ficheiro CSV criado pela primeira vez
     else:
-        df_final = pd.DataFrame([{"Data": data_hoje, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
+        df_final = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
 
-    # Fazer os cálculos de diferença baseados no preço anterior encontrado
     diferenca_valor = preco_atual - preco_anterior
     
     if preco_anterior > 0:
         diferenca_perc = (diferenca_valor / preco_anterior) * 100
-
     else:
         diferenca_perc = 0.0
 
     df_final.to_csv(FICHEIRO_CSV, index=False)
 
     return preco_anterior, diferenca_valor, diferenca_perc
-
+    
 # Enviar o e-mail
 def enviar_email(corpo_mensagem):
 
@@ -206,11 +292,11 @@ if __name__ == "__main__":
 
     texto_email = "Relatório Diário de Preços:\n\n"
     
-    for jogo in JOGOS_PARA_ACOMPANHAR:
+    for jogo in ITENS_PARA_ACOMPANHAR:
         print(f"A processar: {jogo['nome']}...")
         
-        preco_hoje = obter_preco_atual(jogo["url"])
-        p_ant, diff_v, diff_p = atualizar_dados_e_comparar(jogo["nome"], jogo["url"], preco_hoje)
+        preco_hoje = obter_preco_atual(jogo["url"], jogo["loja"])
+        p_ant, diff_v, diff_p = atualizar_dados_e_comparar(jogo["nome"], jogo["url"], preco_hoje, jogo["loja"])
         
         texto_jogo = f"{jogo['nome']}\n"
         texto_jogo += f"{preco_hoje:.2f} ({p_ant:.2f} | {diff_v:.2f} | {diff_p:.2f}%)\n"
