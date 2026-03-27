@@ -53,7 +53,7 @@ email_destino_env = os.getenv("EMAIL_DESTINO", "")
 EMAIL_DESTINO = [email.strip() for email in email_destino_env.split(",") if email.strip()]
 
 # Variavel usada para não enviar o e-mail (teste)
-MODO_TESTE = True 
+MODO_TESTE = False 
 
 # 2. Funções (DEF)
 
@@ -176,21 +176,25 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual, loja):
 
     """
     Guarda o preço, hora e loja no CSV.
+    Permite até 2 registos por dia (Manhã: 00:00-12:00 / Tarde: 12:01-23:59).
     Calcula a diferença em relação ao último preço conhecido na MESMA loja.
     """
 
     data_hoje = datetime.now().strftime("%Y-%m-%d")
     hora_atual = datetime.now().strftime("%H:%M:%S")
+
+    # Fronteira de turnos
+    limite_meio_dia = "12:00:00" 
+    
     preco_anterior = preco_atual
     
     if os.path.exists(FICHEIRO_CSV) and os.path.getsize(FICHEIRO_CSV) > 0:
         df = pd.read_csv(FICHEIRO_CSV)
         
-        # Adicionar a coluna Hora se não existir
+        # Adicionar a coluna Hora e Loja se não existir
         if 'Hora' not in df.columns:
             df.insert(1, 'Hora', "")
             
-        # Adiciona a coluna Loja se não existir
         if 'Loja' not in df.columns:
             df.insert(2, 'Loja', "")
 
@@ -200,29 +204,41 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual, loja):
         historico_jogo = df[(df['Nome'] == nome_jogo) & (df['Loja'] == loja)]
         
         if not historico_jogo.empty:
-            registo_hoje = historico_jogo[historico_jogo['Data'] == data_hoje]
+            registos_hoje = historico_jogo[historico_jogo['Data'] == data_hoje]
             
-            if not registo_hoje.empty:
-                historico_antes_de_hoje = historico_jogo[historico_jogo['Data'] != data_hoje]
+            # Regra dos turnos
+            if hora_atual <= limite_meio_dia:
+                registo_turno = registos_hoje[registos_hoje['Hora'] <= limite_meio_dia]
 
-                if not historico_antes_de_hoje.empty:
-                     preco_anterior = historico_antes_de_hoje.iloc[-1]['Preco']
+            else:
+                registo_turno = registos_hoje[registos_hoje['Hora'] > limite_meio_dia]
+            
+            # Fazer o update usando a regra do turno
+            if not registo_turno.empty:
+                indice = registo_turno.index[0]
                 
-                indice = registo_hoje.index[0]
+                # Para saber o preço anterior, temos de olhar para o histórico ignorando esta linha que estamos a alterar
+                historico_antes = historico_jogo.drop(index=indice)
+                if not historico_antes.empty:
+                    preco_anterior = historico_antes.iloc[-1]['Preco']
                 
                 df.at[indice, 'Preco'] = preco_atual
                 df.at[indice, 'Hora'] = hora_atual
                 df_final = df
-                
+
+            # Insert da primeira vez que do turno   
             else:
+                
                 preco_anterior = historico_jogo.iloc[-1]['Preco']
                 novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
                 df_final = pd.concat([df, novo_registo], ignore_index=True)
-
+        
+        # Jogo novo no CSV
         else:
             novo_registo = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
             df_final = pd.concat([df, novo_registo], ignore_index=True)
 
+    # Ficheiro CSV criado pela primeira vez
     else:
         df_final = pd.DataFrame([{"Data": data_hoje, "Hora": hora_atual, "Loja": loja, "Nome": nome_jogo, "Preco": preco_atual, "Link": url_jogo}])
 
@@ -236,7 +252,7 @@ def atualizar_dados_e_comparar(nome_jogo, url_jogo, preco_atual, loja):
     df_final.to_csv(FICHEIRO_CSV, index=False)
 
     return preco_anterior, diferenca_valor, diferenca_perc
-
+    
 # Enviar o e-mail
 def enviar_email(corpo_mensagem):
 
