@@ -270,7 +270,7 @@ def enviar_email(corpo_mensagem):
     msg['To'] = ", ".join(EMAIL_DESTINO) 
 
     # Assunto do e-mail
-    msg['Subject'] = f"Atualização Diária de Preços Xbox - {datetime.now().strftime('%d/%m/%Y')}"
+    msg['Subject'] = f"Atualização Diária de Preços - {datetime.now().strftime('%d/%m/%Y')}"
     
     # Criar o texto do e-mail
     msg.attach(MIMEText(texto_final, 'plain'))
