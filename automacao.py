@@ -99,11 +99,13 @@ def extrair_preco_xbox(soup):
     return 0.0
 
 def extrair_preco_mercadolivre(soup):
+
     """
     Regra de Ouro: Analisa a página, recolhe os preços disponíveis 
     (Tela, Parcelas e Código Fonte) e retorna o MAIOR valor.
     Se houver apenas um preço, ele será o maior e o único.
     """
+
     precos_encontrados = []
     html_string = str(soup)
 
@@ -136,7 +138,7 @@ def extrair_preco_mercadolivre(soup):
     # Filtra a lista para garantir que não temos zeros a atrapalhar
     precos_validos = [p for p in precos_encontrados if p > 0.0]
 
-    # A MAGIA ACONTECE AQUI: Devolve o maior preço da lista!
+    # Devolver o maior preço da lista!
     if precos_validos:
         return max(precos_validos)
         
